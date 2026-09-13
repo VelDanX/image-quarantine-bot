@@ -211,4 +211,4 @@ image-quarantine-bot/
 
 ## 📝 Автор / Author
 
-**@VelDanX** · [GitHub](https://github.com/VelDanXx) · [Codeberg](https://codeberg.org/VelDanX)
+**@VelDanXx** · [GitHub](https://github.com/VelDanXx) · [Codeberg](https://codeberg.org/VelDanX)
