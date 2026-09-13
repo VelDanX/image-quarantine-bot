@@ -6,11 +6,12 @@ Discord-бот для автоматического обнаружения и �
 
 Discord bot that automatically detects banned images in messages and puts offenders into quarantine.
 
-**by [@VelDanX](https://github.com/VelDanXx)**
+**by [@VelDanX](https://github.com/VelDanXx) · [Codeberg](https://codeberg.org/VelDanX)** · [Проект на Codeberg](https://codeberg.org/VelDanX/image-quarantine-bot) · [Проект на GitHub](https://github.com/VelDanXx/image-quarantine-bot)
 
 ![Discord.js](https://img.shields.io/badge/Discord.js-v14-5865F2?logo=discord)
 ![MongoDB](https://img.shields.io/badge/MongoDB-6+-success?logo=mongodb)
 ![Node.js](https://img.shields.io/badge/Node.js-22+-success?logo=nodedotjs)
+![Codeberg](https://img.shields.io/badge/Mirror-Codeberg-2185d0?logo=codeberg&logoColor=white)
 
 </div>
 
@@ -210,4 +211,4 @@ image-quarantine-bot/
 
 ## 📝 Автор / Author
 
-**@VelDanX** · [GitHub](https://github.com/VelDanXx)
+**@VelDanX** · [GitHub](https://github.com/VelDanXx) · [Codeberg](https://codeberg.org/VelDanX)
