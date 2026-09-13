@@ -1,7 +1,7 @@
 {
   "name": "image-quarantine-bot",
-  "version": "0.0.1",
-  "description": "by @VelDanX",
+  "version": "0.0.2",
+  "description": "by @VelDanXx",
   "type": "module",
   "main": "src/main.js",
   "scripts": {

@@ -27,3 +27,5 @@ Thumbs.db
 
 # Тесты
 coverage/
+# npm
+package-lock.json

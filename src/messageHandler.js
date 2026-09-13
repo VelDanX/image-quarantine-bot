@@ -296,7 +296,7 @@ async function applyQuarantine(msg, client, match, iq, guildId, imageUrl) {
                             const components = buildComponentsFromJSON(replacedData);
                             if (components.length > 0) {
                                 const payload = { components, flags: MessageFlags.IsComponentsV2 };
-                                if (!iq.disableLogMentions) payload.allowedMentions = { parse: [] };
+                                if (iq.disableLogMentions) payload.allowedMentions = { parse: [] };
                                 await logChannel.send(payload);
                                 logSent = true;
                             }
@@ -315,7 +315,7 @@ async function applyQuarantine(msg, client, match, iq, guildId, imageUrl) {
                         if (!isNaN(colorInt)) container.setAccentColor(colorInt);
                     }
                     const payload = { components: [container], flags: MessageFlags.IsComponentsV2 };
-                    if (!iq.disableLogMentions) payload.allowedMentions = { parse: [] };
+                    if (iq.disableLogMentions) payload.allowedMentions = { parse: [] };
                     await logChannel.send(payload);
                     logSent = true;
                 }
@@ -335,7 +335,7 @@ async function applyQuarantine(msg, client, match, iq, guildId, imageUrl) {
                     container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true));
 
                     const payload = { components: [container], flags: MessageFlags.IsComponentsV2 };
-                    if (!iq.disableLogMentions) payload.allowedMentions = { parse: [] };
+                    if (iq.disableLogMentions) payload.allowedMentions = { parse: [] };
                     await logChannel.send(payload);
                 }
             }

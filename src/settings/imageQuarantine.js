@@ -1067,9 +1067,28 @@ async function showDMPreview(interaction, client, guildId) {
     const iq = s.imageQuarantine;
 
     if (!iq.dmMessageText && !iq.dmMessageJson) {
+        const guild = interaction.guild;
+        const previewVars = {
+            serverName: guild?.name || 'TestServer',
+            serverId: guild?.id || guildId,
+            userMention: `<@${interaction.user.id}>`,
+            userTag: interaction.user.username,
+            userId: interaction.user.id,
+            userName: interaction.user.username,
+            matchedFile: 'example.png',
+            similarity: '92.5',
+            imageUrl: 'https://example.com/preview.png',
+            channel: '#general',
+            autoRemove: 'Да',
+            sendDM: 'Да'
+        };
+        const text = replaceVariables(getDefaultDMText(), previewVars);
+        const c = new ContainerBuilder()
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(text))
+            .setAccentColor(15548997);
         await interaction.editReply({
-            content: '⚠️ Сначала задайте текст или загрузите JSON.',
-            flags: MessageFlags.Ephemeral
+            components: [c],
+            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
         }).catch(() => {});
         return;
     }
@@ -1360,6 +1379,7 @@ async function showLogSettings(interaction, client, guildId) {
 }
 
 async function showLogChannelModal(interaction, client, logMsg, guildId) {
+    const s = await readSettings(guildId);
     const modalId = genModalId('iq_modal_log_channel');
     const modal = new ModalBuilder()
         .setCustomId(modalId)
@@ -1382,7 +1402,7 @@ async function showLogChannelModal(interaction, client, logMsg, guildId) {
             .setCheckboxComponent(
                 new CheckboxBuilder()
                     .setCustomId('iq_log_mentions_checkbox')
-                    .setDefault(true)
+                    .setDefault(!s.imageQuarantine.disableLogMentions)
             )
     );
 
@@ -1804,9 +1824,19 @@ async function showLogPreview(interaction, client, guildId) {
     const iq = s.imageQuarantine;
 
     if (!iq.logMessageText && !iq.logMessageJson) {
+        const container = new ContainerBuilder()
+            .setAccentColor(10181046)
+            .addTextDisplayComponents(
+                new TextDisplayBuilder().setContent('🚨 **Авто-карантин: запрещённое изображение**'),
+                new TextDisplayBuilder().setContent(`**Пользователь:** <@${interaction.user.id}> (\`${interaction.user.id}\`)`),
+                new TextDisplayBuilder().setContent(`**Канал:** ${guildId ? '#general' : 'example'}`),
+                new TextDisplayBuilder().setContent('**Совпадение:** example.png (92.5%)'),
+                new TextDisplayBuilder().setContent('**Снятие ролей:** Да'),
+                new TextDisplayBuilder().setContent('**Уведомление в ЛС:** Да')
+            );
         await interaction.editReply({
-            content: '⚠️ Сначала задайте текст или загрузите JSON.',
-            flags: MessageFlags.Ephemeral
+            components: [container],
+            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
         }).catch(() => {});
         return;
     }
