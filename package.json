@@ -1,0 +1,17 @@
+{
+  "name": "image-quarantine-bot",
+  "version": "0.0.1",
+  "description": "by @VelDanX",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "dependencies": {
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "mongodb": "^6.12.0",
+    "sharp": "^0.34.5"
+  }
+}
