@@ -2,6 +2,7 @@
   "name": "image-quarantine-bot",
   "version": "0.0.2",
   "description": "by @VelDanX",
+  "license": "MIT",
   "type": "module",
   "main": "src/main.js",
   "scripts": {
