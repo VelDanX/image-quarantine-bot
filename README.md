@@ -100,10 +100,13 @@ Discord bot that automatically detects banned images in messages and puts offend
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker build -t image-quarantine-bot:latest .
+docker run --name image-quarantine-bot --network host --env-file .env image-quarantine-bot:latest
 ```
 
 **EN:** Copy `.env.example` to `.env`, fill in your values, then run the commands above.
+
+**Примечание / Note:** контейнер работает в сети хоста (`--network host`) и подключается к MongoDB на `localhost:27017` (без `docker-compose`). The container runs on the host network (`--network host`) and connects to MongoDB on `localhost:27017` (no `docker-compose`).
 
 ### Вариант 2: Вручную / Option 2: Manual
 
@@ -127,9 +130,9 @@ CLIENT_ID=ваш_client_id                 # your application (client) ID
 MONGO_URI=mongodb://local:local@localhost:27017/image-quarantine-bot?authSource=admin
 ```
 
-**RU:** `DISCORD_TOKEN` и `CLIENT_ID` обязательны — без них бот не запустится. `MONGO_URI` по умолчанию совпадает с той, что поднимает `docker-compose.yml`.
+**RU:** `DISCORD_TOKEN` и `CLIENT_ID` обязательны — без них бот не запустится. `MONGO_URI` должен указывать на вашу MongoDB (по умолчанию `localhost:27017`).
 
-**EN:** `DISCORD_TOKEN` and `CLIENT_ID` are required — the bot refuses to start without them. Default `MONGO_URI` matches the MongoDB from `docker-compose.yml`.
+**EN:** `DISCORD_TOKEN` and `CLIENT_ID` are required — the bot refuses to start without them. `MONGO_URI` must point to your MongoDB (default `localhost:27017`).
 
 ---
 
