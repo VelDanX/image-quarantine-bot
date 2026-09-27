@@ -6,8 +6,7 @@
   "type": "module",
   "main": "src/main.js",
   "scripts": {
-    "start": "node src/main.js",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "start": "node src/main.js"
   },
   "dependencies": {
     "discord.js": "^14.26.4",

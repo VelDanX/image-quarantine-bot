@@ -25,6 +25,7 @@ import {
     ThumbnailBuilder,
 } from "discord.js";
 import { readSettings, updateSettingsField, updateSettingsMulti } from './core.js';
+import { resolveMessage, runGuarded, respondWithPanel, renderPanel, assertComponentLimit, assertNoLegacyFields, notifyUser, textComponents } from './interactionUtils.js';
 import { getDb } from "../mongo.js";
 import { addDynamicReference, removeDynamicReference, getAllDynamicReferences, buildComponentsFromJSON, getReferenceCount } from "../imageQuarantine.js";
 import { replaceVariables, replaceVariablesInJSON, replaceLogVariables, replaceLogVariablesInJSON } from "../messageHandler.js";
@@ -36,6 +37,22 @@ function getGuildId(interaction) {
 
 function genModalId(prefix) {
     return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+const MAX_BUTTON_LABEL = 80;
+
+function truncateLabel(text, max = MAX_BUTTON_LABEL) {
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function resolveRole(client, guildId, roleId) {
+    if (!roleId) return null;
+    return client.guilds.cache.get(guildId)?.roles.cache.get(roleId) ?? null;
+}
+
+function formatRoleLabel(role) {
+    if (!role) return '⚠️ Не найдена на сервере';
+    return truncateLabel(role.name);
 }
 
 async function buildImageQuarantinePayload(client, guildId) {
@@ -52,90 +69,92 @@ async function buildImageQuarantinePayload(client, guildId) {
     const ignoredRolesCount = (iq.ignoredRoles || []).length;
     const keepRolesCount = (iq.keepRoles || []).length;
 
-    let logChannelLabel = 'Не задан';
-    if (iq.logChannelId) {
-        try {
-            const ch = await client.channels.fetch(iq.logChannelId);
-            logChannelLabel = ch ? `#${ch.name}` : `<#${iq.logChannelId}>`;
-        } catch { logChannelLabel = `<#${iq.logChannelId}>`; }
-    }
+    const logChannelLabel = iq.logChannelId
+        ? `#${client.channels.cache.get(iq.logChannelId)?.name ?? ''}`.trim() || 'Настроить'
+        : 'Не задан';
+
+    const quarantineRole = resolveRole(client, guildId, iq.quarantineRoleId);
+
+    container.addActionRowComponents(
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel(`Вайтлист: пользователей ${ignoredUsersCount}`)
+                .setCustomId("iq_ignored_users"),
+            new ButtonBuilder()
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel(`Вайтлист: ролей ${ignoredRolesCount}`)
+                .setCustomId("iq_ignored_roles")
+        )
+    );
+
+    container.addActionRowComponents(
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setStyle(iq.autoRemoveRoles ? ButtonStyle.Success : ButtonStyle.Danger)
+                .setLabel(`Авто-снятие: ${iq.autoRemoveRoles ? 'вкл' : 'выкл'}`)
+                .setCustomId("iq_toggle_autoremove"),
+            new ButtonBuilder()
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel(`Не снимать: ${keepRolesCount}`)
+                .setCustomId("iq_keep_roles")
+        )
+    );
 
     container.addSectionComponents(
         new SectionBuilder()
             .setButtonAccessory(new ButtonBuilder()
-                .setStyle(ButtonStyle.Secondary)
-                .setLabel(`Пользователей: ${ignoredUsersCount}`)
-                .setCustomId("iq_ignored_users"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Вайтлист пользователи (игнор):")),
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
-                .setStyle(ButtonStyle.Secondary)
-                .setLabel(`Ролей: ${ignoredRolesCount}`)
-                .setCustomId("iq_ignored_roles"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Вайтлист роли (игнор):")),
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
-                .setStyle(iq.autoRemoveRoles ? ButtonStyle.Success : ButtonStyle.Danger)
-                .setLabel(iq.autoRemoveRoles ? 'Включено' : 'Выключено')
-                .setCustomId("iq_toggle_autoremove"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Авто-снятие всех ролей:")),
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
-                .setStyle(keepRolesCount > 0 ? ButtonStyle.Success : ButtonStyle.Danger)
-                .setLabel(`Ролей: ${keepRolesCount}`)
-                .setCustomId("iq_keep_roles"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Роли НЕ снимать:")),
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
-                .setStyle(iq.quarantineRoleId ? ButtonStyle.Success : ButtonStyle.Danger)
-                .setLabel(iq.quarantineRoleId ? `<@&${iq.quarantineRoleId}>` : 'Не задана')
+                .setStyle(iq.quarantineRoleId ? (quarantineRole ? ButtonStyle.Success : ButtonStyle.Danger) : ButtonStyle.Secondary)
+                .setLabel(iq.quarantineRoleId ? formatRoleLabel(quarantineRole) : 'Не задана')
                 .setCustomId("iq_set_quarantine_role"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Роль карантина:")),
+
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Роль карантина")),
         new SectionBuilder()
             .setButtonAccessory(new ButtonBuilder()
                 .setStyle(iq.sendDM ? ButtonStyle.Success : ButtonStyle.Danger)
                 .setLabel(iq.sendDM ? 'Включено' : 'Выключено')
                 .setCustomId("iq_toggle_dm"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Отправлять в ЛС:")),
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Отправлять в ЛС (переключатель):")),
         new SectionBuilder()
             .setButtonAccessory(new ButtonBuilder()
-                .setStyle((iq.dmMessageText || iq.dmMessageJson) ? ButtonStyle.Success : ButtonStyle.Secondary)
-                .setLabel(iq.dmMessageText ? 'Текст' : iq.dmMessageJson ? 'JSON' : 'Стандарт')
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel('Настроить')
                 .setCustomId("iq_dm_settings"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Сообщение в ЛС:")),
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(
+                `Сообщение в ЛС: ${iq.dmMessageText ? 'свой текст' : iq.dmMessageJson ? 'свой JSON' : 'стандартное'}`
+            )),
         new SectionBuilder()
             .setButtonAccessory(new ButtonBuilder()
-                .setStyle(iq.logChannelId ? ButtonStyle.Success : ButtonStyle.Danger)
-                .setLabel(logChannelLabel.length > 30 ? 'Настроить' : logChannelLabel)
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel('Настроить')
                 .setCustomId("iq_log_settings"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Настройка логирования:")),
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(
+                iq.logChannelId
+                    ? `Настройка логирования: канал ${logChannelLabel}`
+                    : 'Настройка логирования: канал не задан'
+            )),
         new SectionBuilder()
             .setButtonAccessory(new ButtonBuilder()
                 .setStyle(ButtonStyle.Secondary)
-                .setLabel(`${Math.round((iq.similarityThreshold ?? 0.80) * 100)}%`)
+                .setLabel('Настроить')
                 .setCustomId("iq_set_similarity"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Чувствительность совпадения изображений:"))
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(
+                `Чувствительность совпадения: ${Math.round((iq.similarityThreshold ?? 0.80) * 100)}%`
+            ))
     );
 
-    container.addSectionComponents(
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
-                .setStyle(ButtonStyle.Success)
-                .setLabel('Добавить')
-                .setCustomId("iq_add_reference"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Добавить запрещённое изображение:"))
-    );
-
-    container.addSectionComponents(
-        new SectionBuilder()
-            .setButtonAccessory(new ButtonBuilder()
+    container.addActionRowComponents(
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
                 .setStyle(ButtonStyle.Secondary)
-                .setLabel('Просмотр')
-                .setCustomId("iq_view_quarantine"))
-            .addTextDisplayComponents(new TextDisplayBuilder().setContent("Список запрещённых изображений:"))
+                .setLabel('Добавить изображение')
+                .setCustomId("iq_add_reference"),
+            new ButtonBuilder()
+                .setStyle(ButtonStyle.Secondary)
+                .setLabel('Список изображений')
+                .setCustomId("iq_view_quarantine")
+        )
     );
-
-    container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true));
 
     container.addActionRowComponents(
         new ActionRowBuilder().addComponents(
@@ -153,21 +172,20 @@ async function buildImageQuarantinePayload(client, guildId) {
     };
 }
 
-export async function showImageQuarantinePanel(interaction, client) {
+export async function showImageQuarantinePanel(interaction, client, existingMessage = null, notifyWith = null) {
     const guildId = getGuildId(interaction);
-    let settingsMsg;
     const payload = await buildImageQuarantinePayload(client, guildId);
 
-    if (interaction.isMessageComponent()) {
-        await interaction.update(payload).catch(() => {});
-    } else if (interaction.replied || interaction.deferred) {
-        await interaction.editReply(payload).catch(() => {});
-    } else {
-        await interaction.reply(payload).catch(() => {});
-    }
-    settingsMsg = await interaction.fetchReply();
+    const rendered = existingMessage
+        ? await renderPanel(existingMessage, payload, 'ImageQuarantine')
+        : await respondWithPanel(interaction, payload, 'ImageQuarantine');
+
+    const settingsMsg = existingMessage || await resolveMessage(interaction);
 
     const collector = settingsMsg.createMessageComponentCollector({ time: 900000 });
+    if (!rendered) {
+        await notifyUser(notifyWith || interaction, 'Панель не обновилась. Кнопки могут не работать — откройте /settings заново.');
+    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -196,12 +214,12 @@ export async function showImageQuarantinePanel(interaction, client) {
                 await updateSettingsField(gId, 'imageQuarantine.sendDM', !s.imageQuarantine.sendDM);
                 await i.editReply(await buildImageQuarantinePayload(client, gId));
             },
-            iq_set_quarantine_role: async () => await showQuarantineRoleSelect(i, client, settingsMsg, gId),
+            iq_set_quarantine_role: async () => { collector.stop(); await showQuarantineRoleSelect(i, client, settingsMsg, gId); },
             iq_set_similarity: async () => await showSimilarityThresholdModal(i, client, settingsMsg, gId),
             iq_log_settings: async () => { collector.stop(); await showLogSettings(i, client, gId); },
-            iq_ignored_users: async () => await showIgnoredUsersSelect(i, client, settingsMsg, gId),
-            iq_ignored_roles: async () => await showIgnoredRolesSelect(i, client, settingsMsg, gId),
-            iq_keep_roles: async () => await showKeepRolesSelect(i, client, settingsMsg, gId),
+            iq_ignored_users: async () => { collector.stop(); await showIgnoredUsersSelect(i, client, settingsMsg, gId); },
+            iq_ignored_roles: async () => { collector.stop(); await showIgnoredRolesSelect(i, client, settingsMsg, gId); },
+            iq_keep_roles: async () => { collector.stop(); await showKeepRolesSelect(i, client, settingsMsg, gId); },
             iq_add_reference: async () => await showAddReferenceModal(i, client, gId),
             iq_view_quarantine: async () => { collector.stop(); await showQuarantineList(i, client, gId); },
             iq_dm_settings: async () => { collector.stop(); await showDMMenu(i, client, gId); },
@@ -214,55 +232,99 @@ export async function showImageQuarantinePanel(interaction, client) {
 
         const handler = handlers[i.customId];
         if (handler) {
-            try {
-                await handler();
-            } catch (error) {
-                logError(i.user, `[ImageQuarantine] ${error.message}`);
-                if (!i.replied && !i.deferred) {
-                    await i.reply({ content: 'Произошла ошибка.', flags: MessageFlags.Ephemeral }).catch(() => {});
-                }
-            }
+            await runGuarded(i.user, 'ImageQuarantine', handler, i);
         }
     });
 
     collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+        if (r === 'time') {
+            settingsMsg.edit({ components: textComponents('Время вышло.') }).catch(() => {});
+        }
+    });
+
+    return rendered;
+}
+
+const SELECT_BACK_ID = 'iq_select_back';
+
+function selectDialogRows(select) {
+    return [
+        new ActionRowBuilder().addComponents(select),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(SELECT_BACK_ID)
+                .setLabel('Назад')
+                .setStyle(ButtonStyle.Secondary)
+        )
+    ];
+}
+
+async function runSelectDialog({ interaction, client, settingsMsg, content, select, save }) {
+    const ownerId = interaction.user.id;
+
+    const payload = { components: [...textComponents(content), ...selectDialogRows(select)] };
+    assertNoLegacyFields('ImageQuarantine/dialog', payload, true);
+    assertComponentLimit('ImageQuarantine/dialog', payload.components);
+    await interaction.update(payload);
+
+    const restore = async live => {
+        collector.stop();
+        await showImageQuarantinePanel(interaction, client, settingsMsg, live);
+    };
+
+    const collector = settingsMsg.createMessageComponentCollector({ time: 120000 });
+
+    collector.on('collect', async (i) => {
+        if (i.user.id !== ownerId) {
+            await i.reply({ content: 'Это меню не для вас.', flags: MessageFlags.Ephemeral }).catch(() => {});
+            return;
+        }
+
+        await runGuarded(i.user, 'ImageQuarantine', async () => {
+            if (i.customId === SELECT_BACK_ID) {
+                await restore(i);
+                return;
+            }
+            await i.deferUpdate();
+            await save(i.values || [], i);
+            await restore(i);
+        }, i);
+    });
+
+    collector.on('end', (c, r) => {
+        if (r === 'time') {
+            return showImageQuarantinePanel(interaction, client, settingsMsg).catch(() => {});
+        }
     });
 }
 
 async function showQuarantineRoleSelect(interaction, client, settingsMsg, guildId) {
+    const currentRoleId = (await readSettings(guildId)).imageQuarantine.quarantineRoleId;
+
     const roleSelect = new RoleSelectMenuBuilder()
         .setCustomId('iq_quick_qrole')
-        .setPlaceholder('Выберите роль карантина...')
-        .setMinValues(1)
+        .setPlaceholder('Выберите роль карантина')
+        .setMinValues(0)
         .setMaxValues(1);
+    if (currentRoleId) roleSelect.setDefaultRoles(currentRoleId);
 
-    const row = new ActionRowBuilder().addComponents(roleSelect);
-    await interaction.reply({
-        content: '**Выберите роль, которая будет выдаваться при карантине (остальные роли снимаются):**',
-        components: [row],
-        flags: MessageFlags.Ephemeral,
-    });
+    await runSelectDialog({
+        interaction, client, settingsMsg,
+        select: roleSelect,
+        content: currentRoleId
+            ? `Сейчас роль карантина: <@&${currentRoleId}>\nВыберите другую роль, чтобы заменить, или нажмите **крестик** у текущей, чтобы сбросить настройку.`
+            : 'Выберите роль, которая будет выдаваться при карантине.',
+        save: async (values, i) => {
+            const current = (await readSettings(guildId)).imageQuarantine.quarantineRoleId;
+            const picked = values[0] || null;
+            const isReset = picked === null || picked === current;
+            const roleId = isReset ? null : picked;
 
-    const msg = await interaction.fetchReply();
-    const collector = msg.createMessageComponentCollector({ componentType: ComponentType.RoleSelect, time: 120000 });
-
-    collector.on('collect', async (sel) => {
-        try {
-            await sel.deferUpdate().catch(() => {});
-            await updateSettingsField(guildId, 'imageQuarantine.quarantineRoleId', sel.values[0]);
-            await sel.editReply({
-                content: `✅ **Роль карантина обновлена:** <@&${sel.values[0]}>`,
-                components: []
-            }).catch(() => {});
-            await settingsMsg.edit(await buildImageQuarantinePayload(client, guildId)).catch(() => {});
-        } catch (e) {
-            logError(interaction.user, `[IQ] quarantine role: ${e.message}`);
+            await updateSettingsField(guildId, 'imageQuarantine.quarantineRoleId', roleId);
+            logInfo(i.user, isReset
+                ? `[ImageQuarantine] Роль карантина сброшена (guild ${guildId}).`
+                : `[ImageQuarantine] Роль карантина обновлена: ${roleId} (guild ${guildId}).`);
         }
-    });
-
-    collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
     });
 }
 
@@ -338,31 +400,11 @@ async function showIgnoredUsersSelect(interaction, client, settingsMsg, guildId)
         .setMaxValues(25);
     if (existing.length > 0) userSelect.setDefaultUsers(...existing);
 
-    const row = new ActionRowBuilder().addComponents(userSelect);
-    await interaction.reply({
-        content: `**Выберите пользователей, которые будут игнорироваться при фильтрации изображений.**\nУже выбрано: ${existing.length}${existing.length > 0 ? '\nЧтобы убрать — отправьте пустой выбор.' : ''}`,
-        components: [row],
-        flags: MessageFlags.Ephemeral,
-    });
-
-    const selectMessage = await interaction.fetchReply();
-    const collector = selectMessage.createMessageComponentCollector({
-        componentType: ComponentType.UserSelect,
-        time: 120000
-    });
-
-    collector.on('collect', async (sel) => {
-        await sel.deferUpdate().catch(() => {});
-        await updateSettingsField(guildId, 'imageQuarantine.ignoredUsers', sel.values);
-        await sel.editReply({
-            content: `✅ **Вайтлист пользователи обновлены.**\nВыбрано: ${sel.values.length}`,
-            components: []
-        }).catch(() => {});
-        await settingsMsg.edit(await buildImageQuarantinePayload(client, guildId)).catch(() => {});
-    });
-
-    collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+    await runSelectDialog({
+        interaction, client, settingsMsg,
+        select: userSelect,
+        content: `Выберите пользователей для игнора.\nУже выбрано: ${existing.length}. Чтобы убрать — отправьте пустой выбор.`,
+        save: (values) => updateSettingsField(guildId, 'imageQuarantine.ignoredUsers', values)
     });
 }
 
@@ -376,31 +418,11 @@ async function showIgnoredRolesSelect(interaction, client, settingsMsg, guildId)
         .setMaxValues(25);
     if (existing.length > 0) roleSelect.setDefaultRoles(...existing);
 
-    const row = new ActionRowBuilder().addComponents(roleSelect);
-    await interaction.reply({
-        content: `**Выберите роли, обладатели которых будут игнорироваться при фильтрации изображений.**\nУже выбрано: ${existing.length}${existing.length > 0 ? '\nЧтобы убрать — отправьте пустой выбор.' : ''}`,
-        components: [row],
-        flags: MessageFlags.Ephemeral,
-    });
-
-    const selectMessage = await interaction.fetchReply();
-    const collector = selectMessage.createMessageComponentCollector({
-        componentType: ComponentType.RoleSelect,
-        time: 120000
-    });
-
-    collector.on('collect', async (sel) => {
-        await sel.deferUpdate().catch(() => {});
-        await updateSettingsField(guildId, 'imageQuarantine.ignoredRoles', sel.values);
-        await sel.editReply({
-            content: `✅ **Вайтлист роли обновлены.**\nВыбрано ролей: ${sel.values.length}`,
-            components: []
-        }).catch(() => {});
-        await settingsMsg.edit(await buildImageQuarantinePayload(client, guildId)).catch(() => {});
-    });
-
-    collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+    await runSelectDialog({
+        interaction, client, settingsMsg,
+        select: roleSelect,
+        content: `Выберите роли, обладатели которых будут игнорироваться.\nУже выбрано: ${existing.length}. Чтобы убрать — отправьте пустой выбор.`,
+        save: (values) => updateSettingsField(guildId, 'imageQuarantine.ignoredRoles', values)
     });
 }
 
@@ -414,35 +436,13 @@ async function showKeepRolesSelect(interaction, client, settingsMsg, guildId) {
         .setMaxValues(25);
     if (existing.length > 0) roleSelect.setDefaultRoles(...existing);
 
-    const row = new ActionRowBuilder().addComponents(roleSelect);
-    await interaction.reply({
-        content: `**Выберите роли, которые НЕ будут автоматически сниматься при карантине.**\nУже выбрано: ${existing.length}${existing.length > 0 ? '\nЧтобы убрать — отправьте пустой выбор.' : ''}`,
-        components: [row],
-        flags: MessageFlags.Ephemeral,
-    });
-
-    const selectMessage = await interaction.fetchReply();
-    const collector = selectMessage.createMessageComponentCollector({
-        componentType: ComponentType.RoleSelect,
-        time: 120000
-    });
-
-    collector.on('collect', async (sel) => {
-        await sel.deferUpdate().catch(() => {});
-        await updateSettingsField(guildId, 'imageQuarantine.keepRoles', sel.values);
-        await sel.editReply({
-            content: `✅ **Роли для сохранения обновлены.**\nВыбрано ролей: ${sel.values.length}`,
-            components: []
-        }).catch(() => {});
-        await settingsMsg.edit(await buildImageQuarantinePayload(client, guildId)).catch(() => {});
-    });
-
-    collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+    await runSelectDialog({
+        interaction, client, settingsMsg,
+        select: roleSelect,
+        content: `Выберите роли, которые НЕ будут сниматься при карантине.\nУже выбрано: ${existing.length}. Чтобы убрать — отправьте пустой выбор.`,
+        save: (values) => updateSettingsField(guildId, 'imageQuarantine.keepRoles', values)
     });
 }
-
-// ─── Add Reference Modal ──────────────────────────────────────────────────────
 
 async function showAddReferenceModal(interaction, client, guildId) {
     const modalId = genModalId('iq_modal_add_reference');
@@ -553,7 +553,7 @@ async function showAddReferenceModal(interaction, client, guildId) {
         }
 
         await modalSubmit.editReply({
-            content: `✅ **Добавлено:** ${successCount}\n❌ **Ошибок:** ${failCount}`,
+            components: textComponents(`✅ **Добавлено:** ${successCount}\n❌ **Ошибок:** ${failCount}`),
         }).catch(() => {});
 
         if (successCount > 0) {
@@ -566,8 +566,6 @@ async function showAddReferenceModal(interaction, client, guildId) {
         }
     }
 }
-
-// ─── Quarantine List (with pagination) ────────────────────────────────────────
 
 async function buildQuarantineListContainer(guildId, page, refs) {
     const ITEMS_PER_PAGE = 5;
@@ -691,15 +689,14 @@ async function showQuarantineList(interaction, client, guildId, page = 0, isUpda
         logError(interaction.user, `[ImageQuarantine] list error: ${error.message}`);
         try {
             await interaction.editReply({
-                content: 'Произошла ошибка.',
-                components: [],
+                components: textComponents('Произошла ошибка.'),
                 files: []
             }).catch(() => {});
         } catch (e) { console.error(e); }
         return;
     }
 
-    const msg = await interaction.fetchReply();
+    const msg = await resolveMessage(interaction);
     const listCollector = msg.createMessageComponentCollector({ time: 120000 });
 
     listCollector.on('collect', async (i) => {
@@ -714,7 +711,7 @@ async function showQuarantineList(interaction, client, guildId, page = 0, isUpda
         if (i.customId === 'iq_close_quarantine_list') {
             listCollector.stop('close');
             await i.deferUpdate().catch(() => {});
-            await i.editReply(await buildImageQuarantinePayload(client, guildId)).catch(() => {});
+            await showImageQuarantinePanel(i, client, msg).catch(() => {});
             return;
         }
 
@@ -839,8 +836,6 @@ async function showReferenceEditModal(interaction, client, guildId, fileName, li
     }
 }
 
-// ─── IQ DM Message Settings ─────────────────────────────────────────────────
-
 async function showDMMenu(interaction, client, guildId) {
     await interaction.deferUpdate().catch(() => {});
 
@@ -888,7 +883,7 @@ async function showDMMenu(interaction, client, guildId) {
                 .addOptions(...options)
         );
         await interaction.editReply({ components: [placeholder, selectRow], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
-        const selectMsg = await interaction.fetchReply();
+        const selectMsg = await resolveMessage(interaction);
         const selectCollector = selectMsg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 120000 });
 
         selectCollector.on('collect', async (sel) => {
@@ -898,35 +893,27 @@ async function showDMMenu(interaction, client, guildId) {
 
                 if (action === 'text') {
                     await showDMTextModal(sel, client, guildId);
-                    const p = await buildImageQuarantinePayload(client, guildId);
-                    await interaction.editReply(p).catch(() => {});
+                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
                     return;
                 }
                 if (action === 'json') {
                     await showDMJsonModal(sel, client, guildId);
-                    const p = await buildImageQuarantinePayload(client, guildId);
-                    await interaction.editReply(p).catch(() => {});
+                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
                     return;
                 }
 
-                const payload = await buildImageQuarantinePayload(client, guildId);
-                await interaction.editReply(payload).catch(() => {});
-
-                switch (action) {
-                    case 'preview':
-                        await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-                        await showDMPreview(sel, client, guildId);
-                        break;
-                    case 'reset':
-                        await updateSettingsMulti(guildId, {'imageQuarantine.dmMessageText': null, 'imageQuarantine.dmMessageJson': null});
-                        await sel.update({
-                            components: [new ContainerBuilder().addTextDisplayComponents(
-                                new TextDisplayBuilder().setContent('✅ Сообщение сброшено на стандартное.')
-                            )],
-                            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-                        }).catch(() => {});
-                        break;
+                if (action === 'preview') {
+                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
+                    await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+                    await showDMPreview(sel, client, guildId);
+                    return;
                 }
+
+                if (action === 'reset') {
+                    await updateSettingsMulti(guildId, {'imageQuarantine.dmMessageText': null, 'imageQuarantine.dmMessageJson': null});
+                }
+
+                await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
             } catch (e) {
                 logError(sel.user, `[IQ] showDMMenu collect: ${e.message}`);
             }
@@ -934,14 +921,13 @@ async function showDMMenu(interaction, client, guildId) {
 
         selectCollector.on('end', async (c, r) => {
             if (r === 'time') {
-                const p = await buildImageQuarantinePayload(client, guildId);
-                await interaction.editReply(p).catch(() => {});
+                await showImageQuarantinePanel(interaction, client, selectMsg).catch(() => {});
             }
         });
     } catch (e) {
         logError(interaction.user, `[IQ] showDMMenu: ${e.message}`);
-        const payload = await buildImageQuarantinePayload(client, guildId);
-        await interaction.editReply(payload).catch(() => {});
+        await showImageQuarantinePanel(interaction, client, await resolveMessage(interaction).catch(() => null))
+            .catch(() => {});
     }
 }
 
@@ -1294,19 +1280,13 @@ async function showDMJsonModal(interaction, client, guildId) {
     }
 }
 
-// ─── IQ Log Settings ─────────────────────────────────────────────────────────
-
 async function buildLogSettingsPayload(client, guildId) {
     const s = await readSettings(guildId);
     const iq = s.imageQuarantine;
 
-    let logChannelLabel = 'Не задан';
-    if (iq.logChannelId) {
-        try {
-            const ch = await client.channels.fetch(iq.logChannelId);
-            logChannelLabel = ch ? `#${ch.name}` : `<#${iq.logChannelId}>`;
-        } catch { logChannelLabel = `<#${iq.logChannelId}>`; }
-    }
+    const logChannelLabel = iq.logChannelId
+        ? `#${client.channels.cache.get(iq.logChannelId)?.name ?? ''}`.trim() || 'Настроить'
+        : 'Не задан';
 
     const container = new ContainerBuilder()
         .addTextDisplayComponents(
@@ -1342,15 +1322,18 @@ async function buildLogSettingsPayload(client, guildId) {
     };
 }
 
-async function showLogSettings(interaction, client, guildId) {
+async function showLogSettings(interaction, client, guildId, existingMessage = null) {
     const payload = await buildLogSettingsPayload(client, guildId);
 
-    if (interaction.isMessageComponent()) {
-        await interaction.update(payload).catch(() => {});
-    }
+    const rendered = existingMessage
+        ? await renderPanel(existingMessage, payload, 'ImageQuarantine/Log')
+        : await respondWithPanel(interaction, payload, 'ImageQuarantine/Log');
 
-    const msg = await interaction.fetchReply();
+    const msg = existingMessage || await resolveMessage(interaction);
     const collector = msg.createMessageComponentCollector({ time: 900000 });
+    if (!rendered) {
+        await notifyUser(interaction, 'Панель логов не обновилась. Кнопки могут не работать — откройте /settings заново.');
+    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -1374,7 +1357,9 @@ async function showLogSettings(interaction, client, guildId) {
     });
 
     collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+        if (r === 'time') {
+            msg.edit({ components: textComponents('Время вышло.') }).catch(() => {});
+        }
     });
 }
 
@@ -1487,7 +1472,7 @@ async function showLogMessageMenu(interaction, client, guildId) {
                 .addOptions(...options)
         );
         await interaction.editReply({ components: [placeholder, selectRow], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
-        const selectMsg = await interaction.fetchReply();
+        const selectMsg = await resolveMessage(interaction);
         const selectCollector = selectMsg.createMessageComponentCollector({ componentType: ComponentType.StringSelect, time: 120000 });
 
         selectCollector.on('collect', async (sel) => {
@@ -1497,39 +1482,31 @@ async function showLogMessageMenu(interaction, client, guildId) {
 
                 if (action === 'text') {
                     await showLogTextModal(sel, client, guildId);
-                    const p = await buildLogSettingsPayload(client, guildId);
-                    await interaction.editReply(p).catch(() => {});
+                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
                     return;
                 }
                 if (action === 'json') {
                     await showLogJsonModal(sel, client, guildId);
-                    const p = await buildLogSettingsPayload(client, guildId);
-                    await interaction.editReply(p).catch(() => {});
+                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
                     return;
                 }
 
-                const payload = await buildLogSettingsPayload(client, guildId);
-                await interaction.editReply(payload).catch(() => {});
-
-                switch (action) {
-                    case 'preview':
-                        await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-                        await showLogPreview(sel, client, guildId);
-                        break;
-                    case 'reset':
-                        await updateSettingsMulti(guildId, {
-                            'imageQuarantine.logMessageText': null,
-                            'imageQuarantine.logMessageJson': null,
-                            'imageQuarantine.logColor': null
-                        });
-                        await sel.update({
-                            components: [new ContainerBuilder().addTextDisplayComponents(
-                                new TextDisplayBuilder().setContent('✅ Сообщение сброшено на стандартное.')
-                            )],
-                            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-                        }).catch(() => {});
-                        break;
+                if (action === 'preview') {
+                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
+                    await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+                    await showLogPreview(sel, client, guildId);
+                    return;
                 }
+
+                if (action === 'reset') {
+                    await updateSettingsMulti(guildId, {
+                        'imageQuarantine.logMessageText': null,
+                        'imageQuarantine.logMessageJson': null,
+                        'imageQuarantine.logColor': null
+                    });
+                }
+
+                await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
             } catch (e) {
                 logError(sel.user, `[IQ] showLogMessageMenu collect: ${e.message}`);
             }
@@ -1537,7 +1514,7 @@ async function showLogMessageMenu(interaction, client, guildId) {
 
         selectCollector.on('end', (c, r) => {
             if (r === 'time') {
-                buildLogSettingsPayload(client, guildId).then(p => interaction.editReply(p).catch(() => {}));
+                showLogSettings(interaction, client, guildId, selectMsg).catch(() => {});
             }
         });
     } catch (e) {

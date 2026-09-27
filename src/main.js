@@ -5,6 +5,8 @@ import { handleSettingsCommand } from './settings.js';
 import { logError, logInfo } from './logger.js';
 import { connectToMongo, closeMongoConnection, ensureIndexes } from './mongo.js';
 import { registerCommands } from './lib/commandRegister.js';
+import { printLocalVersion, checkForUpdateNotice } from './lib/version.js';
+import { isBenignInteractionError } from './settings/interactionUtils.js';
 import { handleMessage, restoreRolesOnQuarantineRemoval, restoreRolesOnStartup } from './messageHandler.js';
 import { initImageQuarantine } from './imageQuarantine.js';
 import config from './config.js';
@@ -38,6 +40,7 @@ const client = new Client({
 });
 
 async function startBot() {
+    printLocalVersion();
     try {
         await connectToMongo(MONGO_URI, 'image-quarantine-bot');
         await ensureIndexes();
@@ -46,6 +49,7 @@ async function startBot() {
             process.exit(1);
         }
         await client.login(DISCORD_TOKEN);
+        checkForUpdateNotice().catch(() => null);
     } catch (err) {
         logError(null, `[MAIN] Ошибка при запуске: ${err.message}`);
         process.exit(1);
@@ -114,7 +118,13 @@ client.on(Events.Error, (error) => {
 });
 
 process.on('unhandledRejection', error => {
-    logError(null, `[MAIN] Unhandled Rejection: ${error && error.message ? error.message : error}`);
+
+    if (isBenignInteractionError(error)) {
+        console.log(`[MAIN] Взаимодействие неактуально (${error.code}): ${error.message}`);
+        return;
+    }
+    console.error(`[ERROR] [MAIN] Unhandled Rejection: ${error && error.message ? error.message : error}`);
+    if (error?.stack) console.error(error.stack);
 });
 
 startBot();

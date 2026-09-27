@@ -13,6 +13,7 @@ import {
     TextDisplayBuilder,
 } from "discord.js";
 import { getDb } from "../mongo.js";
+import { resolveMessage, runGuarded, respondWithPanel, notifyUser, textComponents } from './interactionUtils.js';
 
 import { showImageQuarantinePanel } from './imageQuarantine.js';
 
@@ -144,19 +145,16 @@ export async function showMainMenu(interaction) {
     };
 
     try {
-        if (interaction.isMessageComponent()) {
-            await interaction.update(payload);
-        } else if (interaction.replied || interaction.deferred) {
-            await interaction.editReply(payload);
-        } else {
-            await interaction.reply(payload);
-        }
+        const sent = await respondWithPanel(interaction, payload, 'SETTINGS/Main');
 
-        const message = await interaction.fetchReply();
+        const message = await resolveMessage(interaction);
         const collector = message.createMessageComponentCollector({
             componentType: ComponentType.StringSelect,
             time: 900000
         });
+        if (!sent) {
+            await notifyUser(interaction, 'Главное меню не обновилось. Кнопки могут не работать — откройте /settings заново.');
+        }
 
         collector.on("collect", async (sel) => {
             if (sel.user.id !== interaction.user.id) {
@@ -168,14 +166,16 @@ export async function showMainMenu(interaction) {
                 return;
             }
             collector.stop();
-            switch (sel.values[0]) {
-                case "auto_moderation": await showAutoModerationPanel(sel, sel.client); break;
-            }
+            await runGuarded(sel.user, 'SETTINGS', async () => {
+                switch (sel.values[0]) {
+                    case "auto_moderation": await showAutoModerationPanel(sel, sel.client); break;
+                }
+            }, sel);
         });
 
         collector.on('end', (collected, reason) => {
             if (reason === 'time') {
-                interaction.editReply({ content: 'Время вышло.', components: [] }).catch(() => {});
+                interaction.editReply({ components: textComponents('Время вышло.') }).catch(() => {});
             }
         });
     } catch (error) {
@@ -210,14 +210,13 @@ async function showAutoModerationPanel(interaction, client) {
 
     const payload = { components: [container], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral };
 
-    if (interaction.isMessageComponent()) {
-        await interaction.update(payload).catch(() => {});
-    } else {
-        await interaction.reply(payload).catch(() => {});
-    }
+    const sent = await respondWithPanel(interaction, payload, 'SETTINGS/AutoModeration');
 
-    const msg = await interaction.fetchReply();
+    const msg = await resolveMessage(interaction);
     const collector = msg.createMessageComponentCollector({ time: 900000 });
+    if (!sent) {
+        await notifyUser(interaction, 'Панель авто-модерации не обновилась. Кнопки могут не работать — откройте /settings заново.');
+    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -225,19 +224,21 @@ async function showAutoModerationPanel(interaction, client) {
             return;
         }
 
-        switch (i.customId) {
-            case "am_image_filter":
-                collector.stop();
-                await showImageQuarantinePanel(i, client);
-                break;
-            case "back_to_main":
-                collector.stop();
-                await goBackToMain(i);
-                break;
-        }
+        await runGuarded(i.user, 'SETTINGS', async () => {
+            switch (i.customId) {
+                case "am_image_filter":
+                    collector.stop();
+                    await showImageQuarantinePanel(i, client);
+                    break;
+                case "back_to_main":
+                    collector.stop();
+                    await goBackToMain(i);
+                    break;
+            }
+        }, i);
     });
 
     collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ content: "Время вышло.", components: [] }).catch(() => {});
+        if (r === 'time') interaction.editReply({ components: textComponents('Время вышло.') }).catch(() => {});
     });
 }

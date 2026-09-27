@@ -8,16 +8,13 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: local
-      MONGO_INITDB_ROOT_PASSWORD: local
 
   image-quarantine-bot:
     build: .
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
-      MONGO_URI: mongodb://local:local@mongo:27017/image-quarantine-bot?authSource=admin
+      MONGO_URI: mongodb://mongo:27017/image-quarantine-bot
     depends_on:
       - mongo
 

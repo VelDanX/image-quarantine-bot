@@ -19,13 +19,22 @@ export async function connectToMongo(mongoUri, dbName) {
             });
 
             await client.connect();
-            await client.db('admin').command({ ping: 1 });
             db = client.db(dbName);
+
+            await db.collection('__auth_check__').findOne({}, { projection: { _id: 1 } });
             console.log(`[Mongo] Подключено к MongoDB: ${dbName}${mongoUri.includes('@') ? ' (с аутентификацией)' : ''}`);
         } catch (err) {
+            const failedClient = client;
             client = null;
+            db = null;
             connectionPromise = null;
-            console.error(`[Mongo] Ошибка подключения: ${err.message}`);
+            if (failedClient) await failedClient.close().catch(() => null);
+            if (err.code === 18 || /requires authentication|Unauthorized/i.test(err.message)) {
+                console.error('[Mongo] Ошибка аутентификации: MongoDB требует логин/пароль, но они не переданы в MONGO_URI.');
+                console.error('[Mongo] Ожидаемый формат: mongodb://<user>:<password>@host:27017/image-quarantine-bot?authSource=admin');
+            } else {
+                console.error(`[Mongo] Ошибка подключения: ${err.message}`);
+            }
             throw err;
         }
     })();
@@ -65,6 +74,8 @@ export async function closeMongoConnection() {
         } finally {
             client = null;
             db = null;
+
+            connectionPromise = null;
         }
     }
 }

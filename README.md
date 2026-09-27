@@ -127,12 +127,22 @@ npm start
 ```dotenv
 DISCORD_TOKEN=ваш_токен_бота            # your Discord bot token
 CLIENT_ID=ваш_client_id                 # your application (client) ID
-MONGO_URI=mongodb://local:local@localhost:27017/image-quarantine-bot?authSource=admin
+MONGO_URI=mongodb://localhost:27017/image-quarantine-bot
 ```
 
 **RU:** `DISCORD_TOKEN` и `CLIENT_ID` обязательны — без них бот не запустится. `MONGO_URI` должен указывать на вашу MongoDB (по умолчанию `localhost:27017`).
 
 **EN:** `DISCORD_TOKEN` and `CLIENT_ID` are required — the bot refuses to start without them. `MONGO_URI` must point to your MongoDB (default `localhost:27017`).
+
+### Необязательные переменные / Optional variables
+
+| Переменная / Variable | По умолчанию / Default | Описание / Description |
+|----------------------|------------------------|------------------------|
+| `UPDATE_CHECK` | `true` | `false` — не проверять версию на GitHub при старте. / `false` — skip the GitHub version check on startup. |
+| `GITHUB_REPO` | `VelDanX/image-quarantine-bot` | Репозиторий для проверки обновлений. / Repository used for the update check. |
+
+При старте бот печатает установленную версию, а если на GitHub есть более свежая — предупреждение со ссылкой на релиз. Проверка не блокирует запуск и молча игнорирует отсутствие сети.
+On startup the bot prints the installed version and, if a newer one is available on GitHub, a warning with a link to the release. The check does not block startup and silently ignores network failures.
 
 ---
 
@@ -146,7 +156,7 @@ MONGO_URI=mongodb://local:local@localhost:27017/image-quarantine-bot?authSource=
 
 - **Вкл/выкл фильтрации** — toggle the filter on/off
 - **Игнор пользователей и ролей** — ignored users & roles
-- **Роль карантина** — the quarantine role
+- **Роль карантина** — подпись показывает название роли; сброс — крестиком в списке ролей (пустой выбор) / the quarantine role — the button label shows the role name; reset via the ✕ in the role picker (empty selection)
 - **Авто-снятие ролей** и роли, которые нужно сохранить (используется только для добавления) — auto-remove roles & keep roles list
 - **Лог-канал** и сообщение лога (текст или JSON-шаблон) — log channel & message (text or JSON template)
 - **Уведомление в ЛС** и его шаблон — DM notification & template
