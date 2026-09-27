@@ -106,7 +106,7 @@ export function assertComponentLimit(label, components) {
 export async function respondWithPanel(interaction, payload, label = 'SETTINGS') {
     assertNoLegacyFields(label, payload);
     assertComponentLimit(label, payload.components);
-    return sendPanel(() => {
+    const sent = await sendPanel(() => {
         if (typeof interaction.isMessageComponent === 'function' && interaction.isMessageComponent()) {
             return interaction.update(payload);
         }
@@ -114,42 +114,41 @@ export async function respondWithPanel(interaction, payload, label = 'SETTINGS')
             return interaction.editReply(payload);
         }
         return interaction.reply(payload);
-    }, label, interaction);
+    }, label);
+    return sent || resendPanel(interaction, payload, label);
 }
 
-export async function renderPanel(message, payload, label = 'SETTINGS') {
+export async function renderPanel(message, payload, label = 'SETTINGS', liveInteraction = null) {
     assertNoLegacyFields(label, payload);
     assertComponentLimit(label, payload.components);
-    return sendPanel(() => message.edit(payload), label);
+    const sent = await sendPanel(() => message.edit(payload), label);
+    return sent || resendPanel(liveInteraction, payload, label);
 }
 
-export async function notifyUser(interaction, text) {
-    if (!interaction) return;
-    const payload = { content: text, flags: MessageFlags.Ephemeral };
+async function resendPanel(interaction, payload, label) {
+    if (!interaction || typeof interaction.followUp !== 'function') return null;
+    const fresh = { components: payload.components, flags: (payload.flags | MessageFlags.Ephemeral) };
     try {
-        if ((interaction.replied || interaction.deferred) && typeof interaction.followUp === 'function') {
-            await interaction.followUp(payload);
-            return;
-        }
-        if (typeof interaction.reply === 'function') await interaction.reply(payload);
-    } catch {
-        return;
+        const message = await interaction.followUp(fresh);
+        console.log(`[${label}] Панель отправлена заново отдельным сообщением`);
+        return message;
+    } catch (error) {
+        console.log(`[${label}] Повторно отправить панель не удалось (${error.code || ''}): ${error.message}`);
+        return null;
     }
 }
 
-async function sendPanel(send, label, interaction) {
+async function sendPanel(send, label) {
     try {
         return await send();
     } catch (error) {
         if (isBenignInteractionError(error)) {
             console.log(`[${label}] Взаимодействие уже неактуально (${error.code}): ${error.message}`);
-            await notifyUser(interaction, 'Не удалось обновить панель: сообщение Discord больше недоступно. Откройте /settings заново.');
             return null;
         }
 
         console.error(`[${label}] Не удалось отправить панель: ${error.code || ''} ${error.message}`.trim());
         if (error.stack) console.error(error.stack);
-        await notifyUser(interaction, 'Не удалось открыть панель. Попробуйте ещё раз.');
         return null;
     }
 }

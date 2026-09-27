@@ -25,7 +25,7 @@ import {
     ThumbnailBuilder,
 } from "discord.js";
 import { readSettings, updateSettingsField, updateSettingsMulti } from './core.js';
-import { resolveMessage, runGuarded, respondWithPanel, renderPanel, assertComponentLimit, assertNoLegacyFields, notifyUser, textComponents } from './interactionUtils.js';
+import { resolveMessage, runGuarded, respondWithPanel, renderPanel, assertComponentLimit, assertNoLegacyFields, textComponents } from './interactionUtils.js';
 import { getDb } from "../mongo.js";
 import { addDynamicReference, removeDynamicReference, getAllDynamicReferences, buildComponentsFromJSON, getReferenceCount } from "../imageQuarantine.js";
 import { replaceVariables, replaceVariablesInJSON, replaceLogVariables, replaceLogVariablesInJSON } from "../messageHandler.js";
@@ -172,20 +172,17 @@ async function buildImageQuarantinePayload(client, guildId) {
     };
 }
 
-export async function showImageQuarantinePanel(interaction, client, existingMessage = null, notifyWith = null) {
+export async function showImageQuarantinePanel(interaction, client, existingMessage = null, liveInteraction = null) {
     const guildId = getGuildId(interaction);
     const payload = await buildImageQuarantinePayload(client, guildId);
 
-    const rendered = existingMessage
-        ? await renderPanel(existingMessage, payload, 'ImageQuarantine')
+    const settingsMsg = existingMessage
+        ? await renderPanel(existingMessage, payload, 'ImageQuarantine', liveInteraction)
         : await respondWithPanel(interaction, payload, 'ImageQuarantine');
 
-    const settingsMsg = existingMessage || await resolveMessage(interaction);
+    if (!settingsMsg) return null;
 
     const collector = settingsMsg.createMessageComponentCollector({ time: 900000 });
-    if (!rendered) {
-        await notifyUser(notifyWith || interaction, 'Панель не обновилась. Кнопки могут не работать — откройте /settings заново.');
-    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -242,7 +239,7 @@ export async function showImageQuarantinePanel(interaction, client, existingMess
         }
     });
 
-    return rendered;
+    return settingsMsg;
 }
 
 const SELECT_BACK_ID = 'iq_select_back';
@@ -711,7 +708,7 @@ async function showQuarantineList(interaction, client, guildId, page = 0, isUpda
         if (i.customId === 'iq_close_quarantine_list') {
             listCollector.stop('close');
             await i.deferUpdate().catch(() => {});
-            await showImageQuarantinePanel(i, client, msg).catch(() => {});
+            await showImageQuarantinePanel(i, client, msg, i).catch(() => {});
             return;
         }
 
@@ -893,17 +890,17 @@ async function showDMMenu(interaction, client, guildId) {
 
                 if (action === 'text') {
                     await showDMTextModal(sel, client, guildId);
-                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
+                    await showImageQuarantinePanel(sel, client, selectMsg, sel).catch(() => {});
                     return;
                 }
                 if (action === 'json') {
                     await showDMJsonModal(sel, client, guildId);
-                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
+                    await showImageQuarantinePanel(sel, client, selectMsg, sel).catch(() => {});
                     return;
                 }
 
                 if (action === 'preview') {
-                    await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
+                    await showImageQuarantinePanel(sel, client, selectMsg, sel).catch(() => {});
                     await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
                     await showDMPreview(sel, client, guildId);
                     return;
@@ -913,7 +910,7 @@ async function showDMMenu(interaction, client, guildId) {
                     await updateSettingsMulti(guildId, {'imageQuarantine.dmMessageText': null, 'imageQuarantine.dmMessageJson': null});
                 }
 
-                await showImageQuarantinePanel(sel, client, selectMsg).catch(() => {});
+                await showImageQuarantinePanel(sel, client, selectMsg, sel).catch(() => {});
             } catch (e) {
                 logError(sel.user, `[IQ] showDMMenu collect: ${e.message}`);
             }
@@ -921,12 +918,12 @@ async function showDMMenu(interaction, client, guildId) {
 
         selectCollector.on('end', async (c, r) => {
             if (r === 'time') {
-                await showImageQuarantinePanel(interaction, client, selectMsg).catch(() => {});
+                await showImageQuarantinePanel(interaction, client, selectMsg, interaction).catch(() => {});
             }
         });
     } catch (e) {
         logError(interaction.user, `[IQ] showDMMenu: ${e.message}`);
-        await showImageQuarantinePanel(interaction, client, await resolveMessage(interaction).catch(() => null))
+        await showImageQuarantinePanel(interaction, client, await resolveMessage(interaction).catch(() => null), interaction)
             .catch(() => {});
     }
 }
@@ -1322,18 +1319,16 @@ async function buildLogSettingsPayload(client, guildId) {
     };
 }
 
-async function showLogSettings(interaction, client, guildId, existingMessage = null) {
+async function showLogSettings(interaction, client, guildId, existingMessage = null, liveInteraction = null) {
     const payload = await buildLogSettingsPayload(client, guildId);
 
-    const rendered = existingMessage
-        ? await renderPanel(existingMessage, payload, 'ImageQuarantine/Log')
+    const msg = existingMessage
+        ? await renderPanel(existingMessage, payload, 'ImageQuarantine/Log', liveInteraction)
         : await respondWithPanel(interaction, payload, 'ImageQuarantine/Log');
 
-    const msg = existingMessage || await resolveMessage(interaction);
+    if (!msg) return null;
+
     const collector = msg.createMessageComponentCollector({ time: 900000 });
-    if (!rendered) {
-        await notifyUser(interaction, 'Панель логов не обновилась. Кнопки могут не работать — откройте /settings заново.');
-    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -1361,6 +1356,8 @@ async function showLogSettings(interaction, client, guildId, existingMessage = n
             msg.edit({ components: textComponents('Время вышло.') }).catch(() => {});
         }
     });
+
+    return msg;
 }
 
 async function showLogChannelModal(interaction, client, logMsg, guildId) {
@@ -1482,17 +1479,17 @@ async function showLogMessageMenu(interaction, client, guildId) {
 
                 if (action === 'text') {
                     await showLogTextModal(sel, client, guildId);
-                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
+                    await showLogSettings(sel, client, guildId, selectMsg, sel).catch(() => {});
                     return;
                 }
                 if (action === 'json') {
                     await showLogJsonModal(sel, client, guildId);
-                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
+                    await showLogSettings(sel, client, guildId, selectMsg, sel).catch(() => {});
                     return;
                 }
 
                 if (action === 'preview') {
-                    await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
+                    await showLogSettings(sel, client, guildId, selectMsg, sel).catch(() => {});
                     await sel.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
                     await showLogPreview(sel, client, guildId);
                     return;
@@ -1506,7 +1503,7 @@ async function showLogMessageMenu(interaction, client, guildId) {
                     });
                 }
 
-                await showLogSettings(sel, client, guildId, selectMsg).catch(() => {});
+                await showLogSettings(sel, client, guildId, selectMsg, sel).catch(() => {});
             } catch (e) {
                 logError(sel.user, `[IQ] showLogMessageMenu collect: ${e.message}`);
             }
@@ -1514,13 +1511,13 @@ async function showLogMessageMenu(interaction, client, guildId) {
 
         selectCollector.on('end', (c, r) => {
             if (r === 'time') {
-                showLogSettings(interaction, client, guildId, selectMsg).catch(() => {});
+                showLogSettings(interaction, client, guildId, selectMsg, interaction).catch(() => {});
             }
         });
     } catch (e) {
         logError(interaction.user, `[IQ] showLogMessageMenu: ${e.message}`);
         const payload = await buildLogSettingsPayload(client, guildId);
-        await interaction.editReply(payload).catch(() => {});
+        await respondWithPanel(interaction, payload, 'ImageQuarantine/LogMessage').catch(() => {});
     }
 }
 

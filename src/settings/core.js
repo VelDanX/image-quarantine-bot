@@ -13,7 +13,7 @@ import {
     TextDisplayBuilder,
 } from "discord.js";
 import { getDb } from "../mongo.js";
-import { resolveMessage, runGuarded, respondWithPanel, notifyUser, textComponents } from './interactionUtils.js';
+import { runGuarded, respondWithPanel, textComponents } from './interactionUtils.js';
 
 import { showImageQuarantinePanel } from './imageQuarantine.js';
 
@@ -145,16 +145,13 @@ export async function showMainMenu(interaction) {
     };
 
     try {
-        const sent = await respondWithPanel(interaction, payload, 'SETTINGS/Main');
+        const message = await respondWithPanel(interaction, payload, 'SETTINGS/Main');
+        if (!message) return;
 
-        const message = await resolveMessage(interaction);
         const collector = message.createMessageComponentCollector({
             componentType: ComponentType.StringSelect,
             time: 900000
         });
-        if (!sent) {
-            await notifyUser(interaction, 'Главное меню не обновилось. Кнопки могут не работать — откройте /settings заново.');
-        }
 
         collector.on("collect", async (sel) => {
             if (sel.user.id !== interaction.user.id) {
@@ -175,7 +172,7 @@ export async function showMainMenu(interaction) {
 
         collector.on('end', (collected, reason) => {
             if (reason === 'time') {
-                interaction.editReply({ components: textComponents('Время вышло.') }).catch(() => {});
+                message.edit({ components: textComponents('Время вышло.') }).catch(() => {});
             }
         });
     } catch (error) {
@@ -210,13 +207,10 @@ async function showAutoModerationPanel(interaction, client) {
 
     const payload = { components: [container], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral };
 
-    const sent = await respondWithPanel(interaction, payload, 'SETTINGS/AutoModeration');
+    const msg = await respondWithPanel(interaction, payload, 'SETTINGS/AutoModeration');
+    if (!msg) return;
 
-    const msg = await resolveMessage(interaction);
     const collector = msg.createMessageComponentCollector({ time: 900000 });
-    if (!sent) {
-        await notifyUser(interaction, 'Панель авто-модерации не обновилась. Кнопки могут не работать — откройте /settings заново.');
-    }
 
     collector.on("collect", async (i) => {
         if (i.user.id !== interaction.user.id) {
@@ -239,6 +233,6 @@ async function showAutoModerationPanel(interaction, client) {
     });
 
     collector.on('end', (c, r) => {
-        if (r === 'time') interaction.editReply({ components: textComponents('Время вышло.') }).catch(() => {});
+        if (r === 'time') msg.edit({ components: textComponents('Время вышло.') }).catch(() => {});
     });
 }
